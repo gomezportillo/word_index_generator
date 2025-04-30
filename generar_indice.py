@@ -2,24 +2,28 @@ import PyPDF2
 import re
 import sys
 
-# Variables modificables
 PDF_PATH = "libro.pdf"
 PALABRAS_PATH = "palabras_limpias.txt"
 SALIDA_PATH = "indice_generado.txt"
 
 PALABRAS_A_IGNORAR = {"abbot", "king", "bishop", "child", "saint", "pope", "monastery", "priest", "river", "martyrs", "monk"}
 
-# Código
 def cargar_palabras(ruta_archivo):
+    """
+    Carga la lista de palabras a buscar en el doc
+    """
     with open(ruta_archivo, 'r', encoding='utf-8') as f:
         lineas = f.readlines()
     return [line.strip() for line in lineas if line.strip()]
 
 def obtener_variantes(frase):
+    """
+    Obtiene las variables de la lista de palabras dividas por /, ()
+    También detectar posibles "Apellido, Nombre"
+    """
     variantes = set()
     original = frase.strip()
 
-    # Detectar si es "Apellido, Nombre"
     if ',' in original:
         partes = [p.strip() for p in original.split(',')]
         if len(partes) == 2:
@@ -39,6 +43,9 @@ def obtener_variantes(frase):
 
 
 def extraer_numero_pagina(texto):
+    """
+    Intenta buscar el número de la página en el encabezado
+    """
     lineas = texto.strip().split('\n')
     posibles = []
     if lineas:
@@ -49,7 +56,26 @@ def extraer_numero_pagina(texto):
             return int(numeros[-1])
     return None
 
+def limpiar_partes_de_linea(texto):
+    """
+    Revisa si hay palabras partidas y las junta.
+    """
+    lineas = texto.strip().split('\n')
+    texto_limpio = ""
+
+    ablitas = False
+    for i in range(len(lineas)):
+        if i > 0 and lineas[i-1].endswith('-'):
+            texto_limpio = texto_limpio.rstrip()[:-1] + lineas[i].strip()
+        else:
+            texto_limpio += lineas[i].strip() + " "
+
+    return texto_limpio.strip()
+
 def indexar_palabras_en_pdf(pdf_path, palabras_path):
+    """
+    Busca las palabras objetivo en el PDF
+    """
     frases = cargar_palabras(palabras_path)
     variantes_por_frase = {frase: obtener_variantes(frase) for frase in frases}
     frase_original_por_variante = {}
@@ -70,7 +96,8 @@ def indexar_palabras_en_pdf(pdf_path, palabras_path):
             if not texto:
                 continue
 
-            texto_lower = texto.lower()
+            texto_limpio = limpiar_partes_de_linea(texto)
+            texto_lower = texto_limpio.lower()
             num_pagina_real = extraer_numero_pagina(texto) or (i + 1)
 
             for frase, variantes in variantes_por_frase.items():
@@ -87,9 +114,12 @@ def indexar_palabras_en_pdf(pdf_path, palabras_path):
     return indice
 
 def guardar_indice(indice, salida_path='indice.txt'):
-    with open(salida_path, 'w', encoding='utf-8') as archivo_indice:
+    """
+    Guarda las palabras y páginas encontradas en disco
+    """
+    with open(salida_path, 'w', encoding='utf-8') as f:
         for frase in sorted(indice.keys(), key=str.lower):
-            archivo_indice.write(f"{frase}\n")
+            f.write(f"{frase}\n")
             for variante, paginas in sorted(indice[frase].items(), key=lambda x: x[0].lower()):
                 paginas_str = ', '.join(map(str, paginas)) if paginas else 'No encontrada'
 
@@ -103,11 +133,10 @@ def guardar_indice(indice, salida_path='indice.txt'):
                     )
                 except ValueError:
                     variante_impresa = ' '.join([p.capitalize() for p in variante_words])
-                archivo_indice.write(f"    {variante_impresa}: {paginas_str}\n")
-            archivo_indice.write("\n")
-
-    print(f"Índice generado en '{SALIDA_PATH}' 💾")
+                f.write(f"    {variante_impresa}: {paginas_str}\n")
+            f.write("\n")
 
 if __name__ == "__main__":
     indice = indexar_palabras_en_pdf(PDF_PATH, PALABRAS_PATH)
     guardar_indice(indice, SALIDA_PATH)
+    print(f"Índice generado en '{SALIDA_PATH}'")
