@@ -16,10 +16,13 @@ def cargar_palabras(ruta_archivo):
         lineas = f.readlines()
     return [line.strip() for line in lineas if line.strip()]
 
+
 def obtener_variantes(frase):
     """
-    Obtiene las variables de la lista de palabras dividas por /, ()
-    También detectar posibles "Apellido, Nombre"
+    Obtiene variantes normalizadas de una frase:
+    - Detecta inversión de nombres (Apellido, Nombre)
+    - Divide por / ( ) ,
+    - Si contiene '(s)', genera variante singular y plural
     """
     variantes = set()
     original = frase.strip()
@@ -30,19 +33,34 @@ def obtener_variantes(frase):
             invertido = f"{partes[1]} {partes[0]}"
             variantes.add(invertido.lower())
 
-    # Separar por / ( ) , pero mantener frase completa para reconstrucción
+    # Separar por / ( ) , pero mantener palabras válidas
     brutos = re.split(r'[\/(),]', original)
     for variante in brutos:
         palabras = re.findall(r'\b\w+\b', variante.strip())
         palabras_lower = [p.lower() for p in palabras]
+
+        # Ignorar variantes de una sola letra (como 's') o que no tengan contenido útil
+        if len(palabras_lower) < 1 or all(len(p) <= 1 for p in palabras_lower):
+            continue
+
         if palabras_lower and not all(p in PALABRAS_A_IGNORAR for p in palabras_lower):
             variante_str = ' '.join(palabras_lower)
             variantes.add(variante_str)
 
+            # Añadir plural solo si la original tenía (s)
+            if '(s)' in original:
+                if len(palabras_lower) >= 1:
+                    ultima = palabras_lower[-1]
+                    base = palabras_lower[:-1]
+                    if ultima.endswith('s'):
+                        variantes.add(' '.join(base + [ultima]))  # por si ya es plural
+                    else:
+                        variantes.add(' '.join(base + [ultima + 's']))
+
     return sorted(variantes)
 
 
-def extraer_numero_pagina(texto):
+def extraer_numero_pagina(texto, pagina):
     """
     Intenta buscar el número de la página en el encabezado
     """
@@ -54,7 +72,10 @@ def extraer_numero_pagina(texto):
         numeros = re.findall(r'\b\d{1,4}\b', linea)
         if numeros:
             return int(numeros[-1])
+
+    print(f"Error extrayendo número de página en {pagina}")
     return None
+
 
 def limpiar_partes_de_linea(texto):
     """
@@ -63,14 +84,18 @@ def limpiar_partes_de_linea(texto):
     lineas = texto.strip().split('\n')
     texto_limpio = ""
 
-    ablitas = False
     for i in range(len(lineas)):
-        if i > 0 and lineas[i-1].endswith('-'):
-            texto_limpio = texto_limpio.rstrip()[:-1] + lineas[i].strip()
+        linea_actual = lineas[i].strip()
+
+        if i > 0 and lineas[i - 1].rstrip().endswith('-'):
+            # Quitar guion al final de la línea anterior y unir sin espacio
+            texto_limpio = texto_limpio.rstrip()[:-1] + linea_actual
         else:
-            texto_limpio += lineas[i].strip() + " "
+            # Añadir un espacio entre líneas normales
+            texto_limpio += ' ' + linea_actual
 
     return texto_limpio.strip()
+
 
 def indexar_palabras_en_pdf(pdf_path, palabras_path):
     """
@@ -97,21 +122,27 @@ def indexar_palabras_en_pdf(pdf_path, palabras_path):
                 continue
 
             texto_limpio = limpiar_partes_de_linea(texto)
+            texto_limpio = re.sub(r'(?<=[a-zA-Z])\d{1,3}(?=\W|\s|$)', '', texto_limpio) # Elimina superindices
+            texto_limpio = re.sub(r'(?<=[a-zA-Z])[-–—](?=[a-zA-Z])', ' ', texto_limpio) # Elimina guiones
             texto_lower = texto_limpio.lower()
-            num_pagina_real = extraer_numero_pagina(texto) or (i + 1)
+
+            num_pagina_real = extraer_numero_pagina(texto, i) or (i + 1)
 
             for frase, variantes in variantes_por_frase.items():
-                sys.stdout.write(f"\rBuscando en página {num_pagina_real}  🔍")
+                sys.stdout.write(f"\rBuscando en página {num_pagina_real} (página real {i}) 🔍")
                 sys.stdout.flush()
 
                 for variante in variantes:
-                    palabras = variante.split()
-                    if all(palabra in texto_lower for palabra in palabras):
+                    # palabras = variante.split()
+                    pattern = r'\b' + re.escape(variante) + r'\b'
+
+                    if re.search(pattern, texto_lower):
                         if num_pagina_real not in indice[frase][variante]:
                             indice[frase][variante].append(num_pagina_real)
 
     print("\nBúsqueda completada mi rey 👑\n")
     return indice
+
 
 def guardar_indice(indice, salida_path='indice.txt'):
     """
@@ -135,6 +166,7 @@ def guardar_indice(indice, salida_path='indice.txt'):
                     variante_impresa = ' '.join([p.capitalize() for p in variante_words])
                 f.write(f"    {variante_impresa}: {paginas_str}\n")
             f.write("\n")
+
 
 if __name__ == "__main__":
     indice = indexar_palabras_en_pdf(PDF_PATH, PALABRAS_PATH)
